@@ -14,6 +14,34 @@ RunChime 是一个轻量的 Python 命令行工具，通过 **Server酱 Turbo** 
 
 支持 Linux、Python 3.8+。附加模式依赖 Linux `/proc`；目前不提供 Windows 支持。GPU 任务不需要额外依赖：RunChime 监控进程，不占用 GPU。
 
+## 通知效果
+
+通过 Server酱发送、在微信中打开的通知详情。前两张来自短时测试任务，第三张展示 Codex 主对话本轮结束的提醒。点击图片可放大查看。
+
+<table>
+  <tr>
+    <th>任务正常结束</th>
+    <th>任务异常退出</th>
+    <th>Codex 本轮结束</th>
+  </tr>
+  <tr>
+    <td width="33%" valign="top" align="center">
+      <a href="docs/images/task-success.png"><img src="docs/images/task-success.png" width="270" alt="测试任务正常结束的微信通知，包含退出码 0、耗时和日志路径"></a>
+    </td>
+    <td width="33%" valign="top" align="center">
+      <a href="docs/images/task-failure.png"><img src="docs/images/task-failure.png" width="270" alt="测试任务异常退出的微信通知，包含退出码 1、耗时和日志路径"></a>
+    </td>
+    <td width="33%" valign="top" align="center">
+      <a href="docs/images/codex-turn-ended.png"><img src="docs/images/codex-turn-ended.png" width="270" alt="Codex 主对话本轮工作已结束的微信通知"></a>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">退出码为 <code>0</code>，包含耗时和日志位置。</td>
+    <td valign="top">退出码为 <code>1</code>，包含耗时和日志位置。</td>
+    <td valign="top">表示主对话本轮已结束，不代表整个项目已完成。</td>
+  </tr>
+</table>
+
 ## 快速开始
 
 ### 1. 安装

@@ -14,6 +14,34 @@ RunChime is a lightweight Python CLI that sends notifications through **ServerCh
 
 Supports Linux and Python 3.8+. Attach mode uses Linux `/proc`; Windows is not currently supported. GPU workloads need no extra dependencies: RunChime watches processes without using the GPU.
 
+## Notification examples
+
+Notification detail pages opened from WeChat, delivered through ServerChan. The first two screenshots show short test tasks; the third shows a Codex main-conversation turn ending. The screenshots are in Chinese; click an image to enlarge it.
+
+<table>
+  <tr>
+    <th>Normal exit</th>
+    <th>Nonzero exit</th>
+    <th>Codex turn ended</th>
+  </tr>
+  <tr>
+    <td width="33%" valign="top" align="center">
+      <a href="docs/images/task-success.png"><img src="docs/images/task-success.png" width="270" alt="WeChat notification showing a test task exiting normally with code 0, duration, and log path"></a>
+    </td>
+    <td width="33%" valign="top" align="center">
+      <a href="docs/images/task-failure.png"><img src="docs/images/task-failure.png" width="270" alt="WeChat notification showing a test task exiting with code 1, duration, and log path"></a>
+    </td>
+    <td width="33%" valign="top" align="center">
+      <a href="docs/images/codex-turn-ended.png"><img src="docs/images/codex-turn-ended.png" width="270" alt="WeChat notification stating that the current Codex main-conversation turn has ended"></a>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">Exit code <code>0</code>, with duration and log location.</td>
+    <td valign="top">Exit code <code>1</code>, with duration and log location.</td>
+    <td valign="top">One main-conversation turn has ended; this does not mean the whole project is complete.</td>
+  </tr>
+</table>
+
 ## Quick start
 
 ### 1. Install
