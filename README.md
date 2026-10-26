@@ -1,20 +1,22 @@
 # RunChime 🔔
 
-**训练结束、评估退出、Codex 回复完成，把提醒发到微信。**
+**English** | [简体中文](README.zh-CN.md)
 
-RunChime 是一个轻量的 Python 命令行工具，通过 **Server酱 Turbo** 发送通知。无需修改训练代码，无第三方运行时依赖。
+**Get a WeChat notification when your training job, evaluation, or Codex turn ends.**
 
-| 场景 | 命令 | 能判断什么 |
+RunChime is a lightweight Python CLI that sends notifications through **ServerChan Turbo (Server酱 Turbo)**. No changes to your training code and no third-party runtime dependencies are required.
+
+| Use case | Command | What it detects |
 | --- | --- | --- |
-| 启动新的训练、评估或脚本 | `runchime run` | 正常结束、非零退出、信号终止、超时 |
-| 任务已经在运行 | `runchime attach --pid PID` | 指定进程已退出；不能可靠取得退出码 |
-| Codex 主对话一轮结束 | `runchime codex install` | `Stop` 事件；忽略子代理和旧通知事件 |
+| Start a new training job, evaluation, or script | `runchime run` | Successful exit, nonzero exit, signal termination, and timeout |
+| Watch a task that is already running | `runchime attach --pid PID` | The selected process has exited; its exit code is unavailable |
+| Notify when a Codex main-thread turn ends | `runchime codex install` | `Stop` events; ignores subagent and legacy notification events |
 
-支持 Linux、Python 3.8+。附加模式依赖 Linux `/proc`；目前不提供 Windows 支持。GPU 任务不需要额外依赖：RunChime 监控进程，不占用 GPU。
+Supports Linux and Python 3.8+. Attach mode uses Linux `/proc`; Windows is not currently supported. GPU workloads need no extra dependencies: RunChime watches processes without using the GPU.
 
-## 快速开始
+## Quick start
 
-### 1. 安装
+### 1. Install
 
 ```bash
 git clone https://github.com/Czyl9323/RunChime.git
@@ -24,200 +26,200 @@ python3 -m venv ~/.venvs/runchime
 export PATH="$HOME/.venvs/runchime/bin:$PATH"
 ```
 
-要让后续终端也能找到命令，可以将最后一行加入 `~/.bashrc` 或 `~/.zshrc`。安装环境无需包含 PyTorch；被监控的 `python`、`torchrun` 等命令仍从当前 shell 的环境中查找。先激活你的训练环境，再运行 RunChime 即可。
+Add the last line to `~/.bashrc` or `~/.zshrc` to make the command available in future terminals. RunChime's environment does not need PyTorch: commands such as `python` and `torchrun` are resolved from your current shell environment. Activate your training environment before running RunChime.
 
-也可使用已有的 pipx：`pipx install .`。项目尚未发布到 PyPI，请从本仓库安装。
+If you already use pipx, you can install with `pipx install .`. The project is not published on PyPI yet; install from this repository.
 
-### 2. 配置你自己的 Server酱密钥
+### 2. Configure your own ServerChan key
 
-1. 打开 [Server酱 Turbo 官网](https://sct.ftqq.com/)，按服务商指引配置微信接收渠道，取得 **SCT 开头的 SendKey**。
-2. 在**实际运行任务或 Codex 的机器和账号下**执行：
+1. Visit [ServerChan Turbo](https://sct.ftqq.com/), follow the provider's instructions to configure a WeChat delivery channel, and obtain a **SendKey starting with `SCT`**.
+2. Run the following **on the machine and under the account that will run your tasks or Codex**:
 
 ```bash
 runchime configure
 ```
 
-按提示输入自己的 SendKey，输入不会回显。密钥默认保存为 `~/.config/runchime/serverchan.key`，权限为 `0600`。仓库不提供共享密钥，也不需要你把密钥填写到源码里。
+Enter your own SendKey at the prompt. Input is hidden. The key is saved to `~/.config/runchime/serverchan.key` by default, with file permissions `0600`. This repository does not provide a shared key, and you do not need to put your key in the source code.
 
 ```bash
-runchime doctor   # 只检查本地配置，不发送微信
-runchime test     # 发送一条配置测试通知，会使用服务商额度
+runchime doctor   # Check local configuration without sending a notification
+runchime test     # Send one test notification; uses your provider's quota
 ```
 
-已有文件不会被静默覆盖；更换密钥使用 `runchime configure --force`。不要把密钥发到 Issue、提交到 Git，或直接放进 shell 命令历史。`.gitignore` 已排除密钥、日志、运行状态及备份文件。
+Existing key files are not silently overwritten. Use `runchime configure --force` to replace a key. Do not post keys in issues, commit them to Git, or include them directly in shell command history. `.gitignore` excludes keys, logs, runtime state, and backup files.
 
-### 3. 启动任务
+### 3. Run a task
 
 ```bash
-runchime run --name "模型训练" -- python -u train.py
-runchime run --name "模型评估" -- bash -o pipefail evaluate.sh
+runchime run --name "Model training" -- python -u train.py
+runchime run --name "Model evaluation" -- bash -o pipefail evaluate.sh
 ```
 
-`--` 后面是原来的命令和参数。任务输出写入日志；启动时会打印日志及结果路径。任务结束后发送一条通知，RunChime 返回任务退出码。
+Everything after `--` is your original command and its arguments. Task output is written to a log; the log and result paths are printed at startup. RunChime sends one notification when the task ends and returns the task's exit code.
 
-## 常见用法
+## Common workflows
 
-### 后台运行，断开 SSH 后继续
+### Run in the background after disconnecting SSH
 
 ```bash
-nohup runchime run --name "实验 A" \
+nohup runchime run --name "Experiment A" \
   --log-dir "$HOME/run-logs" \
   -- python -u train.py --epochs 100 \
   > monitor.log 2>&1 &
 
-echo $!  # RunChime 监控进程的 PID
+echo $!  # PID of the RunChime monitor
 ```
 
-也可以在 `tmux` 内使用。被包装的训练脚本应保持前台运行，内部不要再次用 `nohup`、`&` 或其他方式将实际任务脱离出去。分布式训练包装 `torchrun` 等启动器，而不是单个 worker。
+You can also run it inside `tmux`. The wrapped task must stay in the foreground: do not detach the actual work inside your script using `nohup`, `&`, or another mechanism. For distributed training, wrap the launcher, such as `torchrun`, rather than an individual worker.
 
-需要管道或重定向时，显式使用 shell，并开启 `pipefail`，避免训练失败但管道最后一个命令返回成功：
+For pipelines or redirection, invoke a shell explicitly and enable `pipefail`, so a successful final command does not hide an earlier training failure:
 
 ```bash
-runchime run --name "训练流水线" -- \
+runchime run --name "Training pipeline" -- \
   bash -o pipefail -c 'python -u train.py | tee train.log'
 ```
 
-### 附加到已经运行的进程
+### Attach to an existing process
 
-找到训练启动器或评估进程的 PID，然后运行：
+Find the PID of your training launcher or evaluation process, then run:
 
 ```bash
-nohup runchime attach --name "已有训练" \
+nohup runchime attach --name "Existing training job" \
   --pid 12345 \
   --task-log /path/to/train.log \
   > monitor-12345.log 2>&1 &
 ```
 
-将 PID 和路径替换为你的实际值。`--task-log` 可省略，只记录原日志位置，不读取、修改日志或据此猜测训练是否成功。
+Replace the PID and path with your own values. `--task-log` is optional: it records the existing log's location without reading or modifying its contents or inferring whether training succeeded.
 
-- 进程退出后通知 **“进程已退出，结果未知”**，结果里的 `returncode` 为 `null`。
-- 监控脚本此时返回 `0`，表示观察完成，**不表示训练成功**。
-- PID 与进程启动时间一起校验，避免 PID 被其他进程复用后继续误监控。
-- 停止监控、收到终止信号或达到监控超时，都不会向原任务发送终止信号。
-- 只跟踪所选进程；它退出后仍存活的子进程不在附加模式的观察范围内。
+- When the process exits, the notification reports **“Process exited; result unknown.”** The result's `returncode` is `null`.
+- The monitor returns `0` to indicate that observation completed. **This does not mean the task succeeded.**
+- Both the PID and process start time are checked to avoid accidentally following a different process after PID reuse.
+- Stopping the monitor, sending it a termination signal, or reaching its timeout never sends a termination signal to the watched task.
+- Only the selected process is watched. Children that outlive it are outside the scope of attach mode.
 
-需要准确知道成功或失败时，下一次使用 `runchime run` 启动任务。
+Use `runchime run` for your next task if you need an accurate success or failure result.
 
-### 超时与离线检查
+### Timeouts and offline checks
 
 ```bash
-# 启动模式：1 小时后终止任务；宽限 10 秒后必要时强制终止
-runchime run --name "限时评估" --timeout 3600 --kill-after 10 -- python eval.py
+# Run mode: terminate the task after one hour; force termination after a 10-second grace period if needed
+runchime run --name "Timed evaluation" --timeout 3600 --kill-after 10 -- python eval.py
 
-# 附加模式：1 小时后只停止监控，任务继续运行
-runchime attach --name "观察训练" --pid 12345 --timeout 3600
+# Attach mode: stop monitoring after one hour; leave the task running
+runchime attach --name "Watch training" --pid 12345 --timeout 3600
 
-# 不访问 Server酱，不需要密钥
-runchime run --name "离线测试" --no-notify -- python -c 'print("hello")'
+# No ServerChan request and no key required
+runchime run --name "Offline test" --no-notify -- python -c 'print("hello")'
 ```
 
-附加模式可用 `--interval 5` 调整检查间隔，默认 1 秒。所有参数可通过 `runchime run --help`、`runchime attach --help` 查看。
+In attach mode, use `--interval 5` to change the polling interval; the default is one second. See `runchime run --help` and `runchime attach --help` for all options.
 
-## Codex 完成通知
+## Codex completion notifications
 
-### 安装 Stop Hook
+### Install the Stop hook
 
-先完成密钥配置，再运行：
+Configure your key first, then run:
 
 ```bash
 runchime codex install
 ```
 
-安装器将 RunChime 处理器合并进 `$CODEX_HOME/hooks.json`，未设置 `CODEX_HOME` 时使用 `~/.codex/hooks.json`。保留其他 Hook；修改已有文件前创建带时间戳的备份；重复安装不会增加重复处理器。Hook 使用当前 Python 和安装位置的绝对路径，不依赖 Codex 会话的工作目录或 PATH。
+The installer merges the RunChime handler into `$CODEX_HOME/hooks.json`, or `~/.codex/hooks.json` when `CODEX_HOME` is unset. It preserves other hooks and creates timestamped backups before changing existing files. Repeated installation does not add duplicate handlers. The hook uses absolute paths to the current Python interpreter and installation, so it does not depend on the Codex session's working directory or PATH.
 
-**重新启动 Codex，运行 `/hooks` 审查并信任新 Hook。** 安装或更新配置不会自动取得信任。移动或删除 RunChime 的安装环境后，需要重新安装 Hook。
+**Restart Codex and use `/hooks` to review and trust the new hook.** Installing or updating the configuration does not automatically grant trust. Reinstall the hook if you move or remove RunChime's installation environment.
 
-本项目沿用 Codex CLI 0.163.0 的 Stop Hook 方案。不同版本或客户端的事件路由可能不同，请按下述流程实际联调。官方说明见 [Codex Hooks](https://learn.chatgpt.com/docs/hooks)。
+This integration follows the Stop hook workflow used with Codex CLI 0.163.0. Event routing may vary between versions or clients; verify it using the steps below. See the official [Codex Hooks documentation](https://learn.chatgpt.com/docs/hooks).
 
-### 从旧 `notify_wechat.py` 迁移
+### Migrate from the old `notify_wechat.py` script
 
 ```bash
 runchime codex install --migrate-legacy
 ```
 
-此选项会：
+This option:
 
-1. 备份并移除用户 `hooks.json` 中调用 `notify_wechat.py` 的旧处理器。
-2. 将用户 `config.toml` 中可识别的**单行、顶层**旧 `notify = [...]` 注释掉。
-3. 只安装 RunChime 的 `Stop` 处理器，不注册 `SubagentStop`。
+1. Backs up and removes legacy handlers that invoke `notify_wechat.py` from the user's `hooks.json`.
+2. Comments out a recognizable **single-line, top-level** legacy `notify = [...]` entry in the user's `config.toml`.
+3. Installs only RunChime's `Stop` handler, without registering `SubagentStop`.
 
-复杂或多行旧 `notify` 配置需要手动处理；安装器不会猜测修改。项目级 Hook、内联 `[hooks]` 和其他插件不在自动迁移范围内，请检查是否存在重复通知。原来的 `serverchan.key` 可以继续使用，见下方密钥查找顺序。
+Complex or multiline legacy `notify` entries require manual migration; the installer does not guess how to edit them. Project-level hooks, inline `[hooks]` tables, and other plugins are outside automatic migration, so check them for duplicate notifications. Your existing `serverchan.key` can still be used; see the key lookup order below.
 
-### 验证与卸载
+### Verify and uninstall
 
-下面的测试不发微信：
+This check does not send a WeChat notification:
 
 ```bash
 printf '%s' '{"hook_event_name":"SubagentStop","agent_id":"test-child"}' \
   | python -m runchime codex-hook
 ```
 
-预期输出 `{}`。然后让 Codex 执行一个明确包含子代理的任务：子代理结束时不通知，主对话结束本轮时通知一次。
+The expected output is `{}`. Then ask Codex to perform a task that explicitly uses a subagent: there should be no notification when the subagent finishes, and one when the main conversation ends its turn.
 
 ```bash
 runchime codex uninstall
 ```
 
-卸载只移除 RunChime Hook，保留密钥、去重记录及其他处理器；不会重新启用已停用的旧 `notify`。
+Uninstalling removes only the RunChime hook. It preserves keys, deduplication records, and other handlers, and does not re-enable a previously disabled legacy `notify` entry.
 
-### 事件语义
+### Event semantics
 
-- 只处理 `Stop`；忽略 `SubagentStop`、旧 `agent-turn-complete` 以及其他事件。
-- 相同 `session_id + turn_id` 最多提交一次。去重状态位于 `$CODEX_HOME/wechat-notify-state/`，兼容旧脚本。
-- `Stop` 是**主对话一轮结束**，不保证项目成功。Goal 自动续跑、多轮交互仍可能每轮通知；其他 Stop Hook 要求继续工作时，通知也可能早于整个工作流完成。
-- 发送前写入去重标记。网络超时、进程中断或服务商拒绝后不重试；因此宁可漏发，也不因重复事件再次提交。
-- 不要在运行中删除去重记录。通知失败只返回 `systemMessage`，不要求 Codex 继续工作。
+- Only `Stop` is handled. `SubagentStop`, legacy `agent-turn-complete`, and all other events are ignored.
+- Each `session_id + turn_id` pair is submitted at most once. Deduplication state lives in `$CODEX_HOME/wechat-notify-state/` and is compatible with the old script.
+- `Stop` means **one main-conversation turn has ended**, not that the whole project succeeded. Goal continuations and multi-turn workflows may produce a notification per turn. Other Stop hooks that request more work can also cause notifications before the overall workflow finishes.
+- A deduplication marker is written before sending. Network timeouts, interruptions, and provider rejections are not retried; a notification may be missed rather than submitted again for a repeated event.
+- Do not delete deduplication records while the integration is running. Notification failures return only a `systemMessage`, without asking Codex to continue working.
 
-## 配置与结果
+## Configuration and results
 
-密钥按以下顺序查找；选中的文件无效时直接报错，不静默换用其他账号：
+Keys are resolved in this order. If the selected file is invalid, RunChime reports an error instead of silently switching to another account:
 
-1. 当前命令的 `--key-file /path/to/serverchan.key`（任务监控、doctor、test）。
-2. 环境变量 `RUNCHIME_KEY_FILE` 指定的文件。
-3. `$RUNCHIME_HOME/serverchan.key`；未设置时为 `$XDG_CONFIG_HOME/runchime/serverchan.key`，默认 `~/.config/runchime/serverchan.key`。
-4. 兼容旧配置：`$CODEX_HOME/serverchan.key`，默认 `~/.codex/serverchan.key`。
+1. The current command's `--key-file /path/to/serverchan.key` option, available for task monitoring, `doctor`, and `test`.
+2. The file specified by the `RUNCHIME_KEY_FILE` environment variable.
+3. `$RUNCHIME_HOME/serverchan.key`; otherwise `$XDG_CONFIG_HOME/runchime/serverchan.key`, defaulting to `~/.config/runchime/serverchan.key`.
+4. Legacy configuration: `$CODEX_HOME/serverchan.key`, defaulting to `~/.codex/serverchan.key`.
 
-`configure --key-file PATH` 指定**写入位置**；之后使用该文件时也需设置 `--key-file` 或 `RUNCHIME_KEY_FILE`。使用自定义环境变量安装 Codex Hook 后，启动 Codex 时也要保留对应环境变量。新服务器不会自动同步密钥，需要在该服务器上重新配置。
+`configure --key-file PATH` specifies the **write destination**. To use that file afterward, also set `--key-file` or `RUNCHIME_KEY_FILE`. If you use custom environment variables when installing the Codex hook, keep those variables set when starting Codex. Keys are not automatically synchronized to new servers; configure each server separately.
 
-每次监控在 `logs/runchime/` 下创建独立目录，也可通过 `--log-dir` 指定：
+Each monitoring invocation creates a separate directory under `logs/runchime/`, or the location specified by `--log-dir`:
 
 ```text
-logs/runchime/<时间戳>-<随机后缀>/
-├── output.log   # 启动模式：任务 stdout/stderr；附加模式：监控记录
-└── result.json  # 状态、退出码、PID、耗时、日志位置与通知提交状态
+logs/runchime/<timestamp>-<random-suffix>/
+├── output.log   # Run mode: task stdout/stderr; attach mode: monitor activity
+└── result.json  # Status, exit codes, PID, duration, log paths, and notification status
 ```
 
-| 结果 | 含义 |
+| Result | Meaning |
 | --- | --- |
-| `succeeded` / `failed` | 启动任务返回 0 / 非零 |
-| `terminated` / `interrupted` | 任务被信号终止 / 启动模式监控收到终止信号 |
-| `timed_out` | 启动任务超时，脚本返回 124 |
-| `launch_failed` | 未能启动任务，脚本返回 127 |
-| `exited_unknown` | 附加目标退出，任务退出码未知 |
-| `monitor_stopped` / `monitor_timed_out` | 附加监控停止，原任务未被终止 |
-| `attach_failed` / `observation_failed` | 无法附加或读取状态，脚本返回 2 |
+| `succeeded` / `failed` | The launched task returned zero / nonzero |
+| `terminated` / `interrupted` | The task was terminated by a signal / the run-mode monitor received a termination signal |
+| `timed_out` | The launched task timed out; the monitor returns 124 |
+| `launch_failed` | The task could not be started; the monitor returns 127 |
+| `exited_unknown` | The attached process exited; its exit code is unavailable |
+| `monitor_stopped` / `monitor_timed_out` | Attach monitoring stopped without terminating the original task |
+| `attach_failed` / `observation_failed` | Attaching or reading process state failed; the monitor returns 2 |
 
-通知的 `accepted` 仅表示 Server酱受理；`unknown` 表示网络失败或响应不明确；`rejected` 表示未返回成功码。任务退出状态与通知状态分别记录，通知失败不覆盖任务退出码。缺少密钥时仍会运行任务，但记录 `configuration_error`，建议先执行 `runchime doctor`。
+Notification status `accepted` means only that ServerChan accepted the request. `unknown` means a network failure or an ambiguous response, and `rejected` means the provider did not return a success code. Task and notification statuses are recorded separately; a notification failure does not overwrite the task's exit code. Tasks still run when the key is missing, but the notification status becomes `configuration_error`. Run `runchime doctor` first to check your configuration.
 
-## 隐私与边界
+## Privacy and limitations
 
-- **任务通知**发送任务名、主机名、时间、状态、退出码、日志路径；附加模式还包含目标 PID。不会上传命令参数、代码或日志内容。请勿在任务名里填写敏感信息。
-- **Codex 通知**只发送固定提示与时间，不上传提示词、代码或最后一条回复。
-- 发送使用 HTTPS，无自动网络重试。服务商额度、渠道及微信接收设置由用户自行管理。
-- 服务器断电、监控自身被 `SIGKILL`、网络断开等场景不能保证提醒，需要另一台机器上的心跳监控。
-- 返回 0 仅代表进程正常退出，无法识别被程序吞掉的异常，也不保证模型质量或产物完整性。
+- **Task notifications** include the task name, hostname, timestamps, status, exit codes, and log paths; attach mode also includes the target PID. Command arguments, source code, and log contents are not uploaded. Avoid putting sensitive information in task names.
+- **Codex notifications** contain only a fixed message and a timestamp, without prompts, code, or the last assistant reply.
+- Requests use HTTPS with no automatic network retries. Users manage their own provider quota, delivery channels, and WeChat notification settings.
+- Notifications cannot be guaranteed after a host outage, `SIGKILL` of the monitor itself, or network loss. Detecting those cases requires heartbeat monitoring from another machine.
+- For launched tasks, exit code zero indicates a normal process exit. It cannot reveal exceptions swallowed by the program or guarantee model quality or complete output artifacts.
 
-## 开发与测试
+## Development and testing
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-测试使用临时目录、虚拟密钥和模拟网络，不读取开发者的真实密钥，不发送微信。覆盖任务退出、信号、超时、附加监控、PID 复用、Codex 过滤与并发去重、密钥配置、Hook 合并与迁移。GitHub Actions 会在多版本 Python 上运行这些测试。
+Tests use temporary directories, fake keys, and mocked network calls. They do not read developers' real keys or send WeChat notifications. Coverage includes task exits, signals, timeouts, attach mode, PID reuse, Codex event filtering and concurrent deduplication, key configuration, and hook merging and migration. GitHub Actions runs the tests across multiple Python versions.
 
-源码模式无需安装即可试用：`python -m runchime --help`。兼容入口仍保留为 `scripts/watch_run.py` 和 `scripts/notify_wechat.py`。
+You can try the source tree without installing it: `python -m runchime --help`. Compatibility entry points remain available at `scripts/watch_run.py` and `scripts/notify_wechat.py`.
 
-欢迎通过 [Issues](https://github.com/Czyl9323/RunChime/issues) 提交问题；请移除密钥及私人日志后再附上诊断信息。
+Report problems through [Issues](https://github.com/Czyl9323/RunChime/issues). Remove keys and private log content before attaching diagnostic information.
 
 ## License
 
