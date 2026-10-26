@@ -1,0 +1,47 @@
+# Credentials and local configuration (never commit real SendKeys)
+*.key
+*.key.*
+*.pem
+*.p12
+*.pfx
+.env
+.env.*
+!.env.example
+.codex/
+.runchime/
+.config/
+config.local.*
+secrets/
+
+# Logs, generated results and deduplication state
+logs/
+*.log
+*.log.*
+test-runs/
+wechat-notify-state/
+result.json
+*.claimed
+*.before-*
+*.bak
+*.tmp
+
+# Python / packaging / tooling
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.tox/
+.nox/
+.pytest_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
+
+# Editor / OS files
+.idea/
+.vscode/
+*.swp
+.DS_Store

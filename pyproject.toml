@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "runchime"
+version = "0.1.0"
+description = "WeChat notifications for long-running jobs and Codex turns via ServerChan Turbo"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {file = "LICENSE"}
+authors = [{name = "RunChime contributors"}]
+dependencies = []
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Operating System :: POSIX :: Linux",
+  "Topic :: System :: Monitoring",
+]
+
+[project.scripts]
+runchime = "runchime.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Czyl9323/RunChime"
+Issues = "https://github.com/Czyl9323/RunChime/issues"
+
+[tool.setuptools.packages.find]
+include = ["runchime*"]

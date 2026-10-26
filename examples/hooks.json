@@ -1,0 +1,16 @@
+{
+  "description": "Reference only: prefer runchime codex install to generate absolute paths.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/python /absolute/path/to/RunChime/scripts/notify_wechat.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
