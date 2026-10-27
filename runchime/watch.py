@@ -23,9 +23,14 @@ foreground launcher PID (e.g. torchrun), not an individual distributed worker.
 
 Configure your own SendKey with `runchime configure`; see README for key precedence.
 Notifications contain only name, host, status, time, exit code and log path;
-command arguments and log contents are never sent. There is one HTTP attempt
-per run, with no retries. Server acceptance does not guarantee WeChat delivery.
+command arguments and log contents are never sent. Each notification has one HTTP attempt,
+with no retries. Server acceptance does not guarantee WeChat delivery.
 Host outages or SIGKILL of this monitor require external heartbeat monitoring.
+
+--stall-after enables advisory low-activity warnings (1800 seconds if no value
+is supplied). Process-tree CPU/I/O, log metadata, and associated NVIDIA GPU
+activity are checked together. Unknown metrics suppress warnings. One warning
+is attempted per quiet episode, in addition to the final exit notification.
 """
 
 import argparse
@@ -34,16 +39,19 @@ import json
 import math
 import os
 from pathlib import Path
+import queue
 import signal
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from .config import key_path, read_key
+from .activity import Collector, QuietWindow, Sampler
 
 
 LABELS = {
@@ -89,8 +97,32 @@ def notify(key, result):
         ])
         if result.get("task_log_path"):
             fields.append(("任务日志", result["task_log_path"]))
+    return send_message(key, "任务%s：%s" % (label, result["name"]), fields)
+
+
+def notify_stall(key, result, alert):
+    sample = alert["metrics"]
+    gpu = sample.get("gpu", {})
+    gpu_text = {"idle": "关联 NVIDIA GPU 的设备利用率为 0%（整卡指标）",
+                "not_used": "未发现目标进程树使用 NVIDIA GPU",
+                "no_nvidia": "未检测到 NVIDIA 驱动/工具，未检测其他加速器",
+                "active": "GPU 仍有活动", "unknown": "未知"}.get(gpu.get("status"), "未知")
+    fields = [
+        ("任务", result["name"]), ("服务器", result["host"]), ("PID", result["pid"]),
+        ("预警时间", alert["detected_at"]), ("持续低活动（秒）", alert["quiet_seconds"]),
+        ("进程树 CPU（单核百分比）", sample.get("cpu_percent")),
+        ("I/O 活动", "无新增读写" if sample.get("io_changed") is False else "未知"),
+        ("日志活动", "未变化" if sample.get("log_changed") is False else "未提供日志"),
+        ("GPU 活动", gpu_text),
+        ("日志位置", result.get("task_log_path") or result["log_path"]),
+        ("说明", "任务仍在运行，但持续低活动，疑似停滞；正常等待也可能出现此状态。仅提醒，未终止任务。"),
+    ]
+    return send_message(key, "任务疑似停滞：" + result["name"], fields)
+
+
+def send_message(key, title, fields):
     body = urlencode({
-        "title": ("任务%s：%s" % (label, result["name"]))[:80],
+        "title": title[:80],
         "desp": "\n\n".join("%s：%s" % pair for pair in fields),
     }).encode("utf-8")
     request = Request("https://sctapi.ftqq.com/%s.send" % key, data=body,
@@ -129,6 +161,10 @@ def parse_args(argv=None):
     parser.add_argument("--pid", type=positive_pid, help="附加监控现有 PID，不启动或终止任务")
     parser.add_argument("--task-log", type=Path, help="附加模式下已有任务日志的路径，仅记录位置")
     parser.add_argument("--interval", type=positive_number, default=1, help="附加模式检查间隔秒数（默认 1）")
+    parser.add_argument("--stall-after", nargs="?", type=positive_number, const=1800, metavar="SECONDS",
+                        help="启用多指标低活动预警；省略秒数时为 1800 秒（30 分钟），不终止任务")
+    parser.add_argument("--stall-interval", type=positive_number, default=10,
+                        help="滞留指标采样间隔秒数（默认 10）")
     parser.add_argument("--timeout", type=positive_number, help="最长秒数；启动模式终止任务，附加模式仅停止监控")
     parser.add_argument("--kill-after", type=positive_number, help="启动模式终止宽限秒数，之后 SIGKILL（默认 10）")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="-- 后的前台任务命令")
@@ -181,7 +217,8 @@ def prepare_run(args, mode):
 
 
 def finish_run(args, result, result_path, started, key, key_error):
-    result.update(finished_at=now(), duration_seconds=round(time.monotonic() - started, 3))
+    result.setdefault("finished_at", now())
+    result.setdefault("duration_seconds", round(time.monotonic() - started, 3))
     if args.no_notify:
         result["notification"] = {"status": "disabled"}
     elif key_error:
@@ -195,6 +232,95 @@ def finish_run(args, result, result_path, started, key, key_error):
     print("[watch_run] %s，脚本退出码 %s；通知：%s" %
           (LABELS[result["status"]], result["exit_code"], result["notification"]["status"]), flush=True)
     return result["exit_code"]
+
+
+class StallMonitor:
+    """Collect metrics and send advisory warnings without blocking the task loop."""
+    def __init__(self, args, result, result_path, key, key_error, start_ticks):
+        self.args, self.result, self.result_path = args, result, result_path
+        self.key, self.key_error = key, key_error
+        self.start_ticks = start_ticks
+        self.window = QuietWindow(args.stall_after, args.stall_interval)
+        task_log = result.get("task_log_path") if args.pid else result["log_path"]
+        self.collector = Collector(Sampler(result["pid"], start_ticks, task_log), args.stall_interval)
+        self.responses = queue.Queue()
+        self.sender = None
+        result["stall_monitor"] = {"threshold_seconds": args.stall_after, "sample_interval_seconds": args.stall_interval,
+                                   "state": "collecting_baseline", "alerts": []}
+        save_result(result_path, result)
+
+    def _deliver(self, alert):
+        try:
+            response = notify_stall(self.key, self.result, alert)
+        except Exception:
+            response = {"status": "unknown", "message": "预警请求失败；不自动重试"}
+        self.responses.put((alert, response))
+
+    def _drain_responses(self):
+        while True:
+            try:
+                alert, response = self.responses.get_nowait()
+            except queue.Empty:
+                return
+            alert["notification"].update(response)
+            save_result(self.result_path, self.result)
+
+    def poll(self):
+        self._drain_responses()
+        # Only the most recent metrics may trigger a notification. Discarding
+        # intermediate samples would hide activity, so feed all into the window.
+        sample, due = None, False
+        while True:
+            try:
+                sample = self.collector.samples.get_nowait()
+            except queue.Empty:
+                break
+            due = self.window.update(sample)
+        if sample is None:
+            return
+        if time.monotonic() - sample["time"] > max(3 * self.args.stall_interval, 5):
+            sample = {"time": time.monotonic(), "state": "unknown", "reason": "stale_sample"}
+            due = self.window.update(sample)
+        record = self.result["stall_monitor"]
+        record.update(state=sample["state"], last_sample_at=now(), metrics=sample)
+        if sample["state"] == "active" and record["alerts"]:
+            record["alerts"][-1].setdefault("activity_resumed_at", now())
+        if due and (self.sender is None or not self.sender.is_alive()):
+            try:
+                current = read_process(self.result["pid"])
+                if process_end_reason({"start_ticks": self.start_ticks}, current):
+                    return
+            except (OSError, ValueError, IndexError):
+                return
+            self.window.warned = True
+            alert = {"detected_at": now(), "quiet_seconds": round(sample["time"] - self.window.since, 3),
+                     "metrics": sample, "notification": {"status": "submitting"}}
+            if self.args.no_notify:
+                alert["notification"] = {"status": "disabled"}
+            elif self.key_error:
+                alert["notification"] = {"status": "configuration_error", "message": self.key_error}
+            record["alerts"].append(alert)
+            # Save the attempt before starting HTTP; never retry this episode.
+            save_result(self.result_path, self.result)
+            print("[watch_run] 任务仍在运行，持续低活动 %.1f 秒，疑似停滞（仅提醒）。" % alert["quiet_seconds"], flush=True)
+            if alert["notification"]["status"] == "submitting":
+                self.sender = threading.Thread(target=self._deliver, args=(alert,), daemon=True)
+                self.sender.start()
+        save_result(self.result_path, self.result)
+
+    def close(self):
+        self.collector.close()
+        # This happens after task exit/monitor stop, never before enforcing a
+        # timeout or forwarding a signal. Give in-flight HTTP a bounded finish.
+        if self.sender is not None:
+            self.sender.join(timeout=11)
+        self._drain_responses()
+        record = self.result["stall_monitor"]
+        for alert in record["alerts"]:
+            if alert["notification"]["status"] == "submitting":
+                alert["notification"] = {"status": "unknown", "message": "监控已结束，请求结果不明确；不重试"}
+        record["stopped_at"] = now()
+        save_result(self.result_path, self.result)
 
 
 def read_process(pid):
@@ -228,6 +354,7 @@ def run_attached(args):
     result, result_path, log_path, started, key, key_error = prepare_run(args, "attach")
     result.update(returncode=None, exit_code=2)
     caught = []
+    stall = None
     handlers = {}
     for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         previous = signal.getsignal(signum)
@@ -243,6 +370,8 @@ def run_attached(args):
                 else:
                     result["process_start_ticks"] = initial["start_ticks"]
                     save_result(result_path, result)
+                    if args.stall_after is not None:
+                        stall = StallMonitor(args, result, result_path, key, key_error, initial["start_ticks"])
                     log.write("%s attached pid=%s start_ticks=%s\n" % (now(), args.pid, initial["start_ticks"]))
                     print("[watch_run] 已附加 PID %s；只观察进程，不发送终止信号。" % args.pid, flush=True)
                     next_check = time.monotonic()
@@ -261,13 +390,21 @@ def run_attached(args):
                         if args.timeout is not None and current_time - started >= args.timeout:
                             result.update(status="monitor_timed_out", exit_code=124)
                             break
+                        if stall is not None:
+                            stall.poll()
                         # Short sleep keeps signals responsive even with a long interval.
                         time.sleep(min(0.1, max(0, next_check - time.monotonic())))
             except (OSError, ValueError) as exc:
                 result.update(status="observation_failed", exit_code=2, error=type(exc).__name__)
             log.write("%s %s\n" % (now(), LABELS[result["status"]]))
+        result.update(finished_at=now(), duration_seconds=round(time.monotonic() - started, 3))
+        if stall is not None:
+            stall.close()
+            stall = None
         return finish_run(args, result, result_path, started, key, key_error)
     finally:
+        if stall is not None:
+            stall.close()
         for signum, previous in handlers.items():
             signal.signal(signum, previous)
 
@@ -288,6 +425,7 @@ def run(args):
             continue
         old_handlers[signum] = signal.signal(signum, catch_signal)
     process = None
+    stall = None
     timed_out, stopping, escalated = False, None, False
     def send_group(signum):
         try:
@@ -308,6 +446,10 @@ def run(args):
             if process is not None:
                 result["pid"] = process.pid
                 save_result(result_path, result)
+                if args.stall_after is not None:
+                    initial = read_process(process.pid)
+                    if initial is not None:
+                        stall = StallMonitor(args, result, result_path, key, key_error, initial["start_ticks"])
                 while process.poll() is None:
                     elapsed = time.monotonic() - started
                     if stopping is None and (caught or (args.timeout is not None and elapsed >= args.timeout)):
@@ -317,6 +459,8 @@ def run(args):
                     if stopping is not None and not escalated and (time.monotonic() - stopping >= args.kill_after or len(caught) > 1):
                         send_group(signal.SIGKILL)
                         escalated = True
+                    if stall is not None and stopping is None:
+                        stall.poll()
                     time.sleep(0.1)
                 code = process.wait()
                 if stopping is not None:
@@ -333,11 +477,17 @@ def run(args):
                 result.update(status=status, returncode=code, exit_code=exit_code)
                 if code < 0 or caught:
                     result["signal"] = signal.Signals(caught[0] if caught else -code).name
+        result.update(finished_at=now(), duration_seconds=round(time.monotonic() - started, 3))
+        if stall is not None:
+            stall.close()
+            stall = None
         return finish_run(args, result, result_path, started, key, key_error)
     finally:
         if process is not None and process.poll() is None:
             send_group(signal.SIGKILL)
             process.wait()
+        if stall is not None:
+            stall.close()
         for signum, previous in old_handlers.items():
             signal.signal(signum, previous)
 

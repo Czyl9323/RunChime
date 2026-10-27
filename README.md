@@ -10,6 +10,7 @@ RunChime is a lightweight Python CLI that sends notifications through **ServerCh
 | --- | --- | --- |
 | Start a new training job, evaluation, or script | `runchime run` | Successful exit, nonzero exit, signal termination, and timeout |
 | Watch a task that is already running | `runchime attach --pid PID` | The selected process has exited; its exit code is unavailable |
+| Warn about a potentially stalled task | `run / attach --stall-after` | Sustained low activity across process-tree CPU, I/O, logs, and associated NVIDIA GPUs |
 | Notify when a Codex main-thread turn ends | `runchime codex install` | `Stop` events; ignores subagent and legacy notification events |
 
 Supports Linux and Python 3.8+. Attach mode uses Linux `/proc`; Windows is not currently supported. GPU workloads need no extra dependencies: RunChime watches processes without using the GPU.
@@ -128,6 +129,35 @@ Replace the PID and path with your own values. `--task-log` is optional: it reco
 
 Use `runchime run` for your next task if you need an accurate success or failure result.
 
+### Suspected-stall warnings (30 minutes)
+
+Enable advisory warnings with `--stall-after`. Without a value, the threshold is **30 minutes (1800 seconds)**. Warnings are opt-in; existing commands keep their previous behavior.
+
+```bash
+# Warn after 30 minutes of sustained low activity; keep the task running
+runchime run --name "Training" --stall-after -- python -u train.py
+
+# Attach to an existing task, optionally observing its log as well
+runchime attach --name "Existing training" --pid 12345 \
+  --task-log /path/to/train.log --stall-after
+
+# Use a different threshold, in seconds
+runchime run --name "Evaluation" --stall-after 900 -- python -u eval.py
+```
+
+A missing log update alone does **not** trigger a warning. RunChime samples the selected process and its visible descendants, every 10 seconds by default (`--stall-interval`), and requires a continuous window in which:
+
+- Aggregate CPU usage stays below 1% of one CPU core.
+- Process I/O byte counters do not change, including cached reads and writes.
+- The observed log does not change, if a log is available. Run mode observes `output.log`; attach mode uses `--task-log` if supplied. Only file metadata is read, never log contents.
+- Associated NVIDIA GPUs show no device utilization, or no NVIDIA compute process belongs to the monitored tree. NVIDIA metrics come from `nvidia-smi`; GPU memory allocation alone is not treated as activity.
+
+Any detected activity resets the window. Missing process/I/O/log metrics, failed GPU queries, or `N/A` readings are **unknown**, not zero: they interrupt the window and suppress a stall warning. The latest metrics and reason are stored in `result.json` under `stall_monitor`. If no NVIDIA driver/tool is detected, monitoring uses CPU, I/O, and available log activity; non-NVIDIA accelerator utilization is not supported.
+
+Each continuous quiet episode produces at most one warning attempt, even if delivery fails. Activity must resume before another episode can warn. Warnings do not stop the task or change its exit code, and the final completion notification is still sent separately. `--no-notify` records warning events locally without network requests. Notification requests run in the background so slow HTTP does not delay timeout enforcement or signal forwarding.
+
+Warnings say **“suspected stall”**, not “task failed.” Normal waits can look idle; a busy loop or a program that keeps writing logs can look active without making useful progress. On a shared GPU, other workloads on the same device can suppress a warning. Container PID visibility, short-lived workers, non-NVIDIA accelerators, and unsupported driver metrics limit detection. This is a heuristic for low activity, not a proof of deadlock or a substitute for application progress/heartbeat checks. It applies to task monitoring, not Codex turns.
+
 ### Timeouts and offline checks
 
 ```bash
@@ -214,7 +244,7 @@ Each monitoring invocation creates a separate directory under `logs/runchime/`, 
 ```text
 logs/runchime/<timestamp>-<random-suffix>/
 ├── output.log   # Run mode: task stdout/stderr; attach mode: monitor activity
-└── result.json  # Status, exit codes, PID, duration, log paths, and notification status
+└── result.json  # Status, exit codes, PID, duration, log paths, notification status, and optional stall-warning history
 ```
 
 | Result | Meaning |
@@ -232,6 +262,7 @@ Notification status `accepted` means only that ServerChan accepted the request. 
 ## Privacy and limitations
 
 - **Task notifications** include the task name, hostname, timestamps, status, exit codes, and log paths; attach mode also includes the target PID. Command arguments, source code, and log contents are not uploaded. Avoid putting sensitive information in task names.
+- **Stall warnings** additionally include low-activity duration and sampled CPU, I/O, log-change, and GPU metrics, without log contents.
 - **Codex notifications** contain only a fixed message and a timestamp, without prompts, code, or the last assistant reply.
 - Requests use HTTPS with no automatic network retries. Users manage their own provider quota, delivery channels, and WeChat notification settings.
 - Notifications cannot be guaranteed after a host outage, `SIGKILL` of the monitor itself, or network loss. Detecting those cases requires heartbeat monitoring from another machine.
@@ -243,7 +274,7 @@ Notification status `accepted` means only that ServerChan accepted the request. 
 python -m unittest discover -s tests -v
 ```
 
-Tests use temporary directories, fake keys, and mocked network calls. They do not read developers' real keys or send WeChat notifications. Coverage includes task exits, signals, timeouts, attach mode, PID reuse, Codex event filtering and concurrent deduplication, key configuration, and hook merging and migration. GitHub Actions runs the tests across multiple Python versions.
+Tests use temporary directories, fake keys, and mocked network calls. They do not read developers' real keys or send WeChat notifications. Coverage includes task exits, signals, timeouts, attach mode, PID reuse, Codex event filtering and concurrent deduplication, key configuration, hook merging and migration, and multi-signal stall warnings (including simulated 30-minute windows). GitHub Actions runs the tests across multiple Python versions.
 
 You can try the source tree without installing it: `python -m runchime --help`. Compatibility entry points remain available at `scripts/watch_run.py` and `scripts/notify_wechat.py`.
 
