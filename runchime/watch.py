@@ -267,6 +267,7 @@ class StallMonitor:
 
     def poll(self):
         self._drain_responses()
+        record = self.result["stall_monitor"]
         # Only the most recent metrics may trigger a notification. Discarding
         # intermediate samples would hide activity, so feed all into the window.
         sample, due = None, False
@@ -276,15 +277,15 @@ class StallMonitor:
             except queue.Empty:
                 break
             due = self.window.update(sample)
+            # Recovery may occur before a later quiet sample in this batch.
+            if sample["state"] == "active" and record["alerts"]:
+                record["alerts"][-1].setdefault("activity_resumed_at", now())
         if sample is None:
             return
         if time.monotonic() - sample["time"] > max(3 * self.args.stall_interval, 5):
             sample = {"time": time.monotonic(), "state": "unknown", "reason": "stale_sample"}
             due = self.window.update(sample)
-        record = self.result["stall_monitor"]
         record.update(state=sample["state"], last_sample_at=now(), metrics=sample)
-        if sample["state"] == "active" and record["alerts"]:
-            record["alerts"][-1].setdefault("activity_resumed_at", now())
         if due and (self.sender is None or not self.sender.is_alive()):
             try:
                 current = read_process(self.result["pid"])
