@@ -121,6 +121,19 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(path.read_text(),original)
         self.assertFalse((self.home/'hooks.json').exists())
 
+    def test_cli_doctor_malformed_hooks_json_is_clean_error(self):
+        key = self.root / 'test.key'
+        config.write_key(key, 'SCTfake123')
+        path = self.home / 'hooks.json'
+        for value in ['{"hooks": {"Stop": [{"hooks": null}]}}',
+                      '{"hooks": {"Stop": {"group": []}}}',
+                      '["not", "a", "dict"]']:
+            path.write_text(value)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(cli.main(['doctor', '--key-file', str(key)]), 2)
+            self.assertNotIn('Traceback', err.getvalue())
+
     def test_cli_modes_reject_mismatches_without_launching(self):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(cli.main(['run','--name','test','--pid','123']),2)

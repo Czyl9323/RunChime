@@ -67,7 +67,10 @@ def main(argv=None):
                 hook_path = codex_home() / "hooks.json"
                 if hook_path.exists():
                     data = json.loads(hook_path.read_text())
-                    count = sum(hooks.owned(h) for groups in data.get("hooks", {}).values() for group in groups for h in group.get("hooks", []))
+                    try:
+                        count = sum(hooks.owned(h) for groups in data.get("hooks", {}).values() for group in groups for h in group.get("hooks", []))
+                    except (AttributeError, TypeError) as exc:
+                        raise ValueError(f"hooks.json 结构无效（{type(exc).__name__}）；请检查顶层 hooks 对象与事件数组") from None
                     print("RunChime Hook 数量：%s（信任状态请在 Codex /hooks 中检查）" % count)
                 else:
                     print("未发现用户 hooks.json；任务监控无需安装 Codex Hook。")
